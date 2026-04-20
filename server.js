@@ -1,11 +1,10 @@
 const express = require('express');
-const cors = require('cors'); // <--- NUOVO
+const cors = require('cors'); 
 const app = express();
-const port = process.env.PORT || 3000; // <--- MODIFICATO (Render usa la sua porta)
+const port = process.env.PORT || 3000;
 
-app.use(cors()); // <--- NUOVO: Permette a GitHub Pages di parlare con Render
-app.use(express.static('public')); // Puoi lasciarlo, non darà fastidio
-
+app.use(cors()); 
+app.use(express.static('public'));
 
 app.get('/api/search', async (req, res) => {
     try {
@@ -14,7 +13,6 @@ app.get('/api/search', async (req, res) => {
         const type = mediaType === 'manga' ? 'manga' : 'anime';
         const url = new URL(`https://api.jikan.moe/v4/${type}`);
         
-        // Jikan garantirà 25 risultati per pagina
         url.searchParams.append('limit', '25'); 
         if (page) url.searchParams.append('page', page);
 
@@ -25,29 +23,25 @@ app.get('/api/search', async (req, res) => {
             url.searchParams.append('sort', 'desc');
         }
         
-        // IL FIX: Usiamo direttamente il motore interno di Jikan in modalità "AND"
         if (genre && genre !== '') {
             url.searchParams.append('genres', genre);
-            url.searchParams.append('genres_mode', 'and'); // Esige tutti i tag!
+            url.searchParams.append('genres_mode', 'and'); 
         }
         
         if (exclude_genre && exclude_genre !== '') {
             url.searchParams.append('genres_exclude', exclude_genre);
         }
         
-        // Status
         if (status && status !== '') {
             let finalStatus = status;
             if (type === 'manga' && status === 'airing') finalStatus = 'publishing';
             url.searchParams.append('status', finalStatus);
         }
 
-        // Tipo Manga
         if (type === 'manga' && manga_type && manga_type !== '') {
             url.searchParams.append('type', manga_type);
         }
 
-        // Data / Stagione
         if (year && year.trim() !== '') {
             let startDate = `${year}-01-01`;
             let endDate = `${year}-12-31`;
@@ -65,15 +59,20 @@ app.get('/api/search', async (req, res) => {
         const response = await fetch(url.toString());
         
         if (!response.ok) {
-            if (response.status === 429) return res.status(429).json({ errore: "Troppe richieste. Rallenta!" });
+            if (response.status === 429) return res.status(429).json({ errore: "Troppe richieste a Jikan. Rallenta!" });
             throw new Error(`Jikan Error: ${response.status}`);
+        }
+
+        // Protezione anti HTML
+        const contentType = response.headers.get("content-type");
+        if (!contentType || !contentType.includes("application/json")) {
+             throw new Error("Jikan ha risposto con un formato non valido (forse è in manutenzione).");
         }
 
         const data = await response.json();
         let risultati = data.data || [];
         const paginazione = data.pagination;
 
-        // FILTRO EPISODI LOCALE (Unico necessario perché Jikan non lo supporta)
         if (episodes && episodes.trim() !== '') {
             const max = parseInt(episodes);
             risultati = risultati.filter(a => {
@@ -86,7 +85,7 @@ app.get('/api/search', async (req, res) => {
 
     } catch (error) {
         console.error("Errore di ricerca:", error);
-        res.status(500).json({ errore: "Internal server error" });
+        res.status(500).json({ errore: error.message || "Internal server error" });
     }
 });
 
@@ -105,16 +104,24 @@ app.get('/api/random', async (req, res) => {
         }
 
         let response = await fetch(url);
-        if (!response.ok) throw new Error("API Error");
-        let data = await response.json();
+        if (!response.ok) {
+            if (response.status === 429) return res.status(429).json({ errore: "Troppe richieste a Jikan. Rallenta!" });
+            throw new Error("API Error");
+        }
+        
+        const contentType = response.headers.get("content-type");
+        if (!contentType || !contentType.includes("application/json")) {
+             throw new Error("Jikan ha risposto con HTML.");
+        }
 
+        let data = await response.json();
         let list = data.data || [];
 
         if (list.length === 0) {
-            return res.status(404).json({ errore: "Nessun risultato trovato per questa combinazione." });
+            return res.status(404).json({ errore: "Nessun risultato trovato." });
         }
 
-        const lastPage = data.pagination.last_visible_page;
+        const lastPage = data.pagination?.last_visible_page || 1;
         const maxPage = Math.min(5, lastPage);
         const randPage = Math.floor(Math.random() * maxPage) + 1;
 
@@ -124,11 +131,16 @@ app.get('/api/random', async (req, res) => {
             list = data.data || [];
         }
 
+        if (list.length === 0) {
+            return res.status(404).json({ errore: "Errore nella selezione della pagina casuale." });
+        }
+
         const randomIndex = Math.floor(Math.random() * list.length);
         res.json(list[randomIndex]);
 
     } catch (error) {
-        res.status(500).json({ errore: "Random fetch failed." });
+        console.error("Random Error:", error);
+        res.status(500).json({ errore: error.message || "Random fetch failed." });
     }
 });
 
