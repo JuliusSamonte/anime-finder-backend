@@ -8,7 +8,7 @@ app.use(express.static('public'));
 
 app.get('/api/search', async (req, res) => {
     try {
-        const { mediaType, q, genre, exclude_genre, year, season, episodes, status, manga_type, page } = req.query;
+        const { mediaType, q, genre, exclude_genre, genres_mode, min_score, year, season, episodes, status, manga_type, page } = req.query;
         
         const type = mediaType === 'manga' ? 'manga' : 'anime';
         const url = new URL(`https://api.jikan.moe/v4/${type}`);
@@ -23,13 +23,20 @@ app.get('/api/search', async (req, res) => {
             url.searchParams.append('sort', 'desc');
         }
         
+        // MODIFICA: Logica AND / OR in base alla scelta dell'utente
         if (genre && genre !== '') {
             url.searchParams.append('genres', genre);
-            url.searchParams.append('genres_mode', 'and'); 
+            const mode = genres_mode === 'or' ? 'or' : 'and';
+            url.searchParams.append('genres_mode', mode); 
         }
         
         if (exclude_genre && exclude_genre !== '') {
             url.searchParams.append('genres_exclude', exclude_genre);
+        }
+
+        // NUOVO: Filtro Voto Minimo
+        if (min_score && min_score.trim() !== '') {
+            url.searchParams.append('min_score', min_score);
         }
         
         if (status && status !== '') {
@@ -63,7 +70,6 @@ app.get('/api/search', async (req, res) => {
             throw new Error(`Jikan Error: ${response.status}`);
         }
 
-        // Protezione anti HTML
         const contentType = response.headers.get("content-type");
         if (!contentType || !contentType.includes("application/json")) {
              throw new Error("Jikan ha risposto con un formato non valido (forse è in manutenzione).");
@@ -91,16 +97,20 @@ app.get('/api/search', async (req, res) => {
 
 app.get('/api/random', async (req, res) => {
     try {
-        const { mediaType, genre, exclude_genre } = req.query;
+        const { mediaType, genre, exclude_genre, genres_mode, min_score } = req.query;
         const type = mediaType === 'manga' ? 'manga' : 'anime';
         
         let url = `https://api.jikan.moe/v4/${type}?status=complete&order_by=popularity&limit=25`;
         
         if (genre && genre.trim() !== '') {
-            url += `&genres=${genre}&genres_mode=and`;
+            url += `&genres=${genre}`;
+            url += `&genres_mode=${genres_mode === 'or' ? 'or' : 'and'}`;
         }
         if (exclude_genre && exclude_genre.trim() !== '') {
             url += `&genres_exclude=${exclude_genre}`;
+        }
+        if (min_score && min_score.trim() !== '') {
+            url += `&min_score=${min_score}`;
         }
 
         let response = await fetch(url);
@@ -121,9 +131,9 @@ app.get('/api/random', async (req, res) => {
             return res.status(404).json({ errore: "Nessun risultato trovato." });
         }
 
+        // MODIFICA: VERO RANDOM! Nessun limite di pagine.
         const lastPage = data.pagination?.last_visible_page || 1;
-        const maxPage = Math.min(5, lastPage);
-        const randPage = Math.floor(Math.random() * maxPage) + 1;
+        const randPage = Math.floor(Math.random() * lastPage) + 1;
 
         if (randPage !== 1) {
             response = await fetch(`${url}&page=${randPage}`);
