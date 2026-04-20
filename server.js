@@ -23,16 +23,10 @@ app.get('/api/search', async (req, res) => {
             url.searchParams.append('sort', 'desc');
         }
         
-        if (genre && genre !== '') {
-            url.searchParams.append('genres', genre);
-            // Jikan v4 forza l'AND in automatico
-        }
-        
-        if (exclude_genre && exclude_genre !== '') {
-            url.searchParams.append('genres_exclude', exclude_genre);
-        }
+        if (genre && genre !== '') url.searchParams.append('genres', genre);
+        if (exclude_genre && exclude_genre !== '') url.searchParams.append('genres_exclude', exclude_genre);
 
-        // Chiediamo a Jikan di provare a filtrare il voto alla base
+        // IL FILTRO NATIVO JIKAN (Ora riceverà solo numeri interi dal nostro HTML)
         if (min_score && min_score.trim() !== '') {
             url.searchParams.append('min_score', min_score);
         }
@@ -77,17 +71,7 @@ app.get('/api/search', async (req, res) => {
         let risultati = data.data || [];
         const paginazione = data.pagination;
 
-        // ==========================================
-        // FILTRI LOCALI (IL BUTTAFUORI DEL SERVER)
-        // ==========================================
-
-        // 1. Filtro Voto (Elimina gli errori di cache di Jikan)
-        if (min_score && min_score.trim() !== '') {
-            const scoreNum = parseFloat(min_score);
-            risultati = risultati.filter(item => item.score !== null && item.score >= scoreNum);
-        }
-
-        // 2. Filtro Episodi/Capitoli
+        // L'unico filtro locale necessario è quello per Episodi, poiché MAL non ha un "max_episodes" nativo
         if (episodes && episodes.trim() !== '') {
             const max = parseInt(episodes);
             risultati = risultati.filter(a => {
@@ -113,6 +97,8 @@ app.get('/api/random', async (req, res) => {
         
         if (genre && genre.trim() !== '') url += `&genres=${genre}`;
         if (exclude_genre && exclude_genre.trim() !== '') url += `&genres_exclude=${exclude_genre}`;
+        
+        // Applica il filtro nativo
         if (min_score && min_score.trim() !== '') url += `&min_score=${min_score}`;
 
         let response = await fetch(url);
@@ -127,9 +113,9 @@ app.get('/api/random', async (req, res) => {
         let data = await response.json();
         let list = data.data || [];
 
-        if (list.length === 0) return res.status(404).json({ errore: "Nessun risultato trovato." });
+        if (list.length === 0) return res.status(404).json({ errore: "Nessun risultato trovato con questo voto o filtri." });
 
-        // TRUE RANDOM: Tira il dado su TUTTE le pagine esistenti!
+        // TRUE RANDOM
         const lastPage = data.pagination?.last_visible_page || 1;
         const randPage = Math.floor(Math.random() * lastPage) + 1;
 
@@ -139,15 +125,7 @@ app.get('/api/random', async (req, res) => {
             list = data.data || [];
         }
 
-        // Buttafuori Locale su Random
-        if (min_score && min_score.trim() !== '') {
-            const scoreNum = parseFloat(min_score);
-            list = list.filter(item => item.score !== null && item.score >= scoreNum);
-        }
-
-        if (list.length === 0) {
-            return res.status(404).json({ errore: "Anime trovato, ma il voto era troppo basso! Riprova la magia." });
-        }
+        if (list.length === 0) return res.status(404).json({ errore: "Errore durante la pesca randomica." });
 
         const randomIndex = Math.floor(Math.random() * list.length);
         res.json(list[randomIndex]);
