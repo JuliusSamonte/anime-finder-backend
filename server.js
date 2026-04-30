@@ -16,19 +16,27 @@ app.get('/api/search', async (req, res) => {
         url.searchParams.append('limit', '25'); 
         if (page) url.searchParams.append('page', page);
 
-        if (q && q.trim() !== '') {
+        const hasQuery = q && q.trim() !== '';
+        const hasMinScore = min_score && min_score.trim() !== '';
+
+        if (hasQuery) {
             url.searchParams.append('q', q.trim());
         } else {
-            url.searchParams.append('order_by', 'members');
+            // FIX: When min_score is active, order by score instead of members.
+            // Jikan ignores min_score when order_by=members (cached popular list).
+            if (hasMinScore) {
+                url.searchParams.append('order_by', 'score');
+            } else {
+                url.searchParams.append('order_by', 'members');
+            }
             url.searchParams.append('sort', 'desc');
         }
         
         if (genre && genre !== '') url.searchParams.append('genres', genre);
         if (exclude_genre && exclude_genre !== '') url.searchParams.append('genres_exclude', exclude_genre);
 
-        // IL FILTRO NATIVO JIKAN (Ora riceverà solo numeri interi dal nostro HTML)
-        if (min_score && min_score.trim() !== '') {
-            url.searchParams.append('min_score', min_score);
+        if (hasMinScore) {
+            url.searchParams.append('min_score', min_score.trim());
         }
         
         if (status && status !== '') {
@@ -64,14 +72,14 @@ app.get('/api/search', async (req, res) => {
 
         const contentType = response.headers.get("content-type");
         if (!contentType || !contentType.includes("application/json")) {
-             throw new Error("Jikan ha risposto con un formato non valido. Riprova.");
+            throw new Error("Jikan ha risposto con un formato non valido. Riprova.");
         }
 
         const data = await response.json();
         let risultati = data.data || [];
         const paginazione = data.pagination;
 
-        // L'unico filtro locale necessario è quello per Episodi, poiché MAL non ha un "max_episodes" nativo
+        // Local filter for episodes/chapters (Jikan has no native max_episodes param)
         if (episodes && episodes.trim() !== '') {
             const max = parseInt(episodes);
             risultati = risultati.filter(a => {
@@ -93,15 +101,22 @@ app.get('/api/random', async (req, res) => {
         const { mediaType, genre, exclude_genre, min_score } = req.query;
         const type = mediaType === 'manga' ? 'manga' : 'anime';
         
-        let url = `https://api.jikan.moe/v4/${type}?status=complete&order_by=popularity&limit=25`;
-        
-        if (genre && genre.trim() !== '') url += `&genres=${genre}`;
-        if (exclude_genre && exclude_genre.trim() !== '') url += `&genres_exclude=${exclude_genre}`;
-        
-        // Applica il filtro nativo
-        if (min_score && min_score.trim() !== '') url += `&min_score=${min_score}`;
+        const hasMinScore = min_score && min_score.trim() !== '';
 
-        let response = await fetch(url);
+        // FIX: Use order_by=score when min_score is active, otherwise Jikan ignores the filter.
+        const orderBy = hasMinScore ? 'score' : 'popularity';
+        
+        const url = new URL(`https://api.jikan.moe/v4/${type}`);
+        url.searchParams.append('status', type === 'manga' ? 'complete' : 'complete');
+        url.searchParams.append('order_by', orderBy);
+        url.searchParams.append('sort', 'desc');
+        url.searchParams.append('limit', '25');
+
+        if (genre && genre.trim() !== '') url.searchParams.append('genres', genre);
+        if (exclude_genre && exclude_genre.trim() !== '') url.searchParams.append('genres_exclude', exclude_genre);
+        if (hasMinScore) url.searchParams.append('min_score', min_score.trim());
+
+        let response = await fetch(url.toString());
         if (!response.ok) {
             if (response.status === 429) return res.status(429).json({ errore: "Troppe richieste a Jikan. Rallenta!" });
             throw new Error("API Error");
@@ -115,12 +130,13 @@ app.get('/api/random', async (req, res) => {
 
         if (list.length === 0) return res.status(404).json({ errore: "Nessun risultato trovato con questo voto o filtri." });
 
-        // TRUE RANDOM
+        // Pick a random page, then a random item from that page
         const lastPage = data.pagination?.last_visible_page || 1;
         const randPage = Math.floor(Math.random() * lastPage) + 1;
 
         if (randPage !== 1) {
-            response = await fetch(`${url}&page=${randPage}`);
+            url.searchParams.set('page', randPage);
+            response = await fetch(url.toString());
             data = await response.json();
             list = data.data || [];
         }
